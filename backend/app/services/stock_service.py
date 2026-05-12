@@ -104,64 +104,112 @@ async def _alpha_vantage_daily(symbol: str, days: int = 30) -> list:
         return None
 
 
-# ============ yfinance 兜底实现 ============
+# ============ yfinance 兜底实现（直接调 Yahoo Finance API） ============
+
+_YAHOO_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+}
+
 
 async def _yfinance_quote(symbol: str) -> dict:
     try:
-        import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="5d")
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        params = {"interval": "1d", "range": "5d"}
+        async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+            resp = await client.get(url, params=params, headers=_YAHOO_HEADERS)
 
-        if hist.empty:
+            if resp.status_code != 200:
+                print(f"[WARN] Yahoo Finance HTTP {resp.status_code} for {symbol}")
+                return None
+
+            data = resp.json()
+
+        result = data.get("chart", {}).get("result")
+        if not result:
+            print(f"[WARN] Yahoo Finance 未返回 {symbol} 数据: {data.get('chart', {}).get('error')}")
             return None
 
-        # 用最近一天的数据
-        latest = hist.iloc[-1]
-        prev = hist.iloc[-2] if len(hist) >= 2 else latest
+        meta = result[0].get("meta", {})
+        indicators = result[0].get("indicators", {}).get("quote", [{}])[0]
+        closes = indicators.get("close", [])
+        volumes = indicators.get("volume", [])
+        opens = indicators.get("open", [])
+        highs = indicators.get("high", [])
+        lows = indicators.get("low", [])
 
-        price = round(float(latest["Close"]), 2)
-        prev_close = round(float(prev["Close"]), 2)
+        # 过滤掉 None 值，取最近有效数据
+        valid_closes = [c for c in closes if c is not None]
+        if not valid_closes:
+            return None
+
+        price = round(valid_closes[-1], 2)
+        prev_close = round(meta.get("chartPreviousClose", meta.get("previousClose", 0)), 2)
         change = round(price - prev_close, 2)
         change_pct = f"{(change / prev_close * 100):.2f}%" if prev_close else "0%"
+
+        latest_volume = next((v for v in reversed(volumes) if v is not None), 0)
+        latest_open = next((o for o in reversed(opens) if o is not None), 0)
+        latest_high = next((h for h in reversed(highs) if h is not None), 0)
+        latest_low = next((l for l in reversed(lows) if l is not None), 0)
 
         return {
             "symbol": symbol,
             "price": price,
             "change": change,
             "change_percent": change_pct,
-            "volume": int(latest["Volume"]),
-            "latest_trading_day": hist.index[-1].strftime("%Y-%m-%d"),
+            "volume": int(latest_volume),
+            "latest_trading_day": "",
             "previous_close": prev_close,
-            "open": round(float(latest["Open"]), 2),
-            "high": round(float(latest["High"]), 2),
-            "low": round(float(latest["Low"]), 2),
+            "open": round(latest_open, 2),
+            "high": round(latest_high, 2),
+            "low": round(latest_low, 2),
         }
     except Exception as e:
-        print(f"[ERROR] yfinance quote failed: {e}")
+        print(f"[ERROR] Yahoo Finance quote failed: {e}")
         return None
 
 
 async def _yfinance_daily(symbol: str, days: int = 30) -> list:
     try:
-        import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="1mo")
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        params = {"interval": "1d", "range": "1mo"}
+        async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+            resp = await client.get(url, params=params, headers=_YAHOO_HEADERS)
 
-        if hist.empty:
+            if resp.status_code != 200:
+                print(f"[WARN] Yahoo Finance daily HTTP {resp.status_code} for {symbol}")
+                return []
+
+            data = resp.json()
+
+        result = data.get("chart", {}).get("result")
+        if not result:
             return []
 
+        timestamps = result[0].get("timestamp", [])
+        indicators = result[0].get("indicators", {}).get("quote", [{}])[0]
+        opens = indicators.get("open", [])
+        highs = indicators.get("high", [])
+        lows = indicators.get("low", [])
+        closes = indicators.get("close", [])
+        volumes = indicators.get("volume", [])
+
         daily_data = []
-        for date, row in hist.tail(days).iterrows():
+        for i in range(len(timestamps)):
+            if closes[i] is None:
+                continue
+            from datetime import datetime
+            date_str = datetime.utcfromtimestamp(timestamps[i]).strftime("%Y-%m-%d")
             daily_data.append({
-                "date": date.strftime("%Y-%m-%d"),
-                "open": round(float(row["Open"]), 2),
-                "high": round(float(row["High"]), 2),
-                "low": round(float(row["Low"]), 2),
-                "close": round(float(row["Close"]), 2),
-                "volume": int(row["Volume"]),
+                "date": date_str,
+                "open": round(opens[i] or 0, 2),
+                "high": round(highs[i] or 0, 2),
+                "low": round(lows[i] or 0, 2),
+                "close": round(closes[i], 2),
+                "volume": int(volumes[i] or 0),
             })
 
-        return list(reversed(daily_data))
+        return list(reversed(daily_data[:days]))
     except Exception as e:
-        print(f"[ERROR] yfinance daily failed: {e}")
+        print(f"[ERROR] Yahoo Finance daily failed: {e}")
         return []
