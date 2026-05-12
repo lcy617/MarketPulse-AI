@@ -1,6 +1,5 @@
 import httpx
 import asyncio
-import yfinance as yf
 from app.config import ALPHA_VANTAGE_API_KEY, ALPHA_VANTAGE_BASE_URL
 
 
@@ -109,6 +108,7 @@ async def _alpha_vantage_daily(symbol: str, days: int = 30) -> list:
 
 async def _yfinance_quote(symbol: str) -> dict:
     try:
+        import yfinance as yf
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period="5d")
 
@@ -143,6 +143,7 @@ async def _yfinance_quote(symbol: str) -> dict:
 
 async def _yfinance_daily(symbol: str, days: int = 30) -> list:
     try:
+        import yfinance as yf
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period="1mo")
 
