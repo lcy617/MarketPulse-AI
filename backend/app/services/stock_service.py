@@ -9,11 +9,14 @@ async def get_stock_quote(symbol: str) -> dict:
         "symbol": symbol,
         "apikey": ALPHA_VANTAGE_API_KEY,
     }
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(ALPHA_VANTAGE_BASE_URL, params=params)
         data = response.json()
 
+    # 调试日志
+    print(f"[DEBUG] Alpha Vantage response for {symbol}: {list(data.keys())}")
     if "Global Quote" not in data or not data["Global Quote"]:
+        print(f"[DEBUG] Full response: {data}")
         return None
 
     quote = data["Global Quote"]
