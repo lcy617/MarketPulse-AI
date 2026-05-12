@@ -1,46 +1,46 @@
-import yfinance as yf
+import httpx
+from app.config import ALPHA_VANTAGE_API_KEY, ALPHA_VANTAGE_BASE_URL
 
 
 async def get_stock_quote(symbol: str) -> dict:
-    """获取股票实时报价（使用 Yahoo Finance）"""
+    """获取股票实时报价（使用 Alpha Vantage）"""
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
+        params = {
+            "function": "GLOBAL_QUOTE",
+            "symbol": symbol,
+            "apikey": ALPHA_VANTAGE_API_KEY,
+        }
+        async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+            resp = await client.get(ALPHA_VANTAGE_BASE_URL, params=params)
+            data = resp.json()
 
-        if not info or "regularMarketPrice" not in info:
-            # 尝试从 fast_info 获取
-            fast = ticker.fast_info
-            if not fast:
-                return None
-            return {
-                "symbol": symbol,
-                "price": round(fast.get("lastPrice", 0), 2),
-                "change": round(fast.get("lastPrice", 0) - fast.get("previousClose", 0), 2),
-                "change_percent": f"{((fast.get('lastPrice', 0) - fast.get('previousClose', 0)) / fast.get('previousClose', 1) * 100):.2f}%",
-                "volume": int(fast.get("lastVolume", 0)),
-                "latest_trading_day": "",
-                "previous_close": round(fast.get("previousClose", 0), 2),
-                "open": round(fast.get("open", 0), 2),
-                "high": round(fast.get("dayHigh", 0), 2),
-                "low": round(fast.get("dayLow", 0), 2),
-            }
+        # 检查是否触发了 API 限流
+        if "Note" in data or "Information" in data:
+            msg = data.get("Note") or data.get("Information", "")
+            print(f"[WARN] Alpha Vantage 限流: {msg}")
+            return None
 
-        price = info.get("regularMarketPrice", 0)
-        prev_close = info.get("previousClose", 0)
-        change = round(price - prev_close, 2)
-        change_pct = f"{(change / prev_close * 100):.2f}%" if prev_close else "0%"
+        quote = data.get("Global Quote")
+        if not quote or "05. price" not in quote:
+            print(f"[WARN] Alpha Vantage 未返回 {symbol} 的报价数据, 响应: {data}")
+            return None
+
+        price = float(quote.get("05. price", 0))
+        prev_close = float(quote.get("08. previous close", 0))
+        change = float(quote.get("09. change", 0))
+        change_pct = quote.get("10. change percent", "0%")
 
         return {
             "symbol": symbol,
             "price": round(price, 2),
-            "change": change,
+            "change": round(change, 2),
             "change_percent": change_pct,
-            "volume": int(info.get("regularMarketVolume", 0)),
-            "latest_trading_day": "",
+            "volume": int(quote.get("06. volume", 0)),
+            "latest_trading_day": quote.get("07. latest trading day", ""),
             "previous_close": round(prev_close, 2),
-            "open": round(info.get("regularMarketOpen", 0), 2),
-            "high": round(info.get("regularMarketDayHigh", 0), 2),
-            "low": round(info.get("regularMarketDayLow", 0), 2),
+            "open": round(float(quote.get("02. open", 0)), 2),
+            "high": round(float(quote.get("03. high", 0)), 2),
+            "low": round(float(quote.get("04. low", 0)), 2),
         }
     except Exception as e:
         print(f"[ERROR] get_stock_quote failed: {e}")
@@ -48,26 +48,41 @@ async def get_stock_quote(symbol: str) -> dict:
 
 
 async def get_stock_daily(symbol: str, days: int = 30) -> list:
-    """获取股票近期日线数据"""
+    """获取股票近期日线数据（使用 Alpha Vantage）"""
     try:
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="1mo")
+        params = {
+            "function": "TIME_SERIES_DAILY",
+            "symbol": symbol,
+            "apikey": ALPHA_VANTAGE_API_KEY,
+            "outputsize": "compact",
+        }
+        async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+            resp = await client.get(ALPHA_VANTAGE_BASE_URL, params=params)
+            data = resp.json()
 
-        if hist.empty:
+        # 检查限流
+        if "Note" in data or "Information" in data:
+            msg = data.get("Note") or data.get("Information", "")
+            print(f"[WARN] Alpha Vantage 限流: {msg}")
+            return []
+
+        time_series = data.get("Time Series (Daily)")
+        if not time_series:
+            print(f"[WARN] Alpha Vantage 未返回 {symbol} 的日线数据")
             return []
 
         daily_data = []
-        for date, row in hist.tail(days).iterrows():
+        for date, values in sorted(time_series.items(), reverse=True)[:days]:
             daily_data.append({
-                "date": date.strftime("%Y-%m-%d"),
-                "open": round(row["Open"], 2),
-                "high": round(row["High"], 2),
-                "low": round(row["Low"], 2),
-                "close": round(row["Close"], 2),
-                "volume": int(row["Volume"]),
+                "date": date,
+                "open": round(float(values["1. open"]), 2),
+                "high": round(float(values["2. high"]), 2),
+                "low": round(float(values["3. low"]), 2),
+                "close": round(float(values["4. close"]), 2),
+                "volume": int(values["5. volume"]),
             })
 
-        return list(reversed(daily_data))
+        return daily_data
     except Exception as e:
         print(f"[ERROR] get_stock_daily failed: {e}")
         return []
