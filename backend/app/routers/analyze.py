@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.services.stock_service import get_stock_quote, get_stock_daily
@@ -21,6 +22,8 @@ async def analyze(request: AnalyzeRequest):
     if not quote:
         raise HTTPException(status_code=404, detail=f"未找到股票 {symbol} 的数据")
 
+    # Alpha Vantage 免费版限制每秒 1 次请求，等 1.5 秒再请求日线数据
+    await asyncio.sleep(1.5)
     daily = await get_stock_daily(symbol, days=20)
 
     # 2. 调用 LLM 分析
