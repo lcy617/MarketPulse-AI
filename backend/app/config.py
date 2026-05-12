@@ -1,8 +1,8 @@
 import os
 from dotenv import load_dotenv
 
-# 加载 .env 文件
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+# 加载 .env 文件（本地开发用，Render 上用环境变量）
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'), override=False)
 
 # Alpha Vantage
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
