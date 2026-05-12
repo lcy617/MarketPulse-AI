@@ -1,0 +1,2 @@
+# 引用 backend 的依赖
+-r backend/requirements.txt
